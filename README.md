@@ -1,93 +1,315 @@
-# Optuna CV Yolo
 
+# optuna-cv-yolo (YOLO tiny + MLflow + Optuna)
 
+Projet MLOps de détection d'objets (YOLO tiny) avec :
 
-## Getting started
+- **DVC** pour le versioning de données (tiny COCO "person")
+- **MLflow + AWS S3** pour le tracking d'expériences et des artefacts
+- **Scripts Python** pour :
+  - un entraînement **baseline** YOLO tiny (`src/train_cv.py`)
+  - une petite **grille d’expériences** (`scripts/run_grid.*`)
+  - une **optimisation d’hyperparamètres avec Optuna** (`src/optuna_yolo.py`, `scripts/run_optuna.*`)
+- Contexte :
+  - TP4 : script `train_cv.py` + MLflow
+  - TP6 : ajout d’**Optuna** pour optimiser les hyperparamètres (epochs, imgsz, …)
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+---
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
+## 1. Démarrer l'infrastructure (MLflow + AWS S3)
 
-## Add your files
+Puis lancer l’infrastructure Docker :
 
-- [ ] [Create](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#create-a-file) or [upload](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#upload-a-file) files
-- [ ] [Add files using the command line](https://docs.gitlab.com/topics/git/add_files/#add-files-to-a-git-repository) or push an existing Git repository with the following command:
-
+```bash
+docker compose up -d
 ```
-cd existing_repo
-git remote add origin https://gitlab.com/mlops_tps/optuna-cv-yolo.git
-git branch -M main
-git push -uf origin main
+
+Services principaux :
+
+* **MLflow UI** : [http://localhost:5000](http://localhost:5000)
+* (Éventuellement) **ZenML Server** : [http://localhost:8080](http://localhost:8080) (non utilisé dans ce TP)
+
+Les artefacts MLflow (modèles, fichiers, métriques, etc.) sont stockés dans un bucket **AWS S3**
+(configuré dans `docker-compose.yml`).
+
+---
+
+## 2. Environnement Python local
+
+Toutes les commandes d’entraînement (baseline, grille, Optuna) s’exécutent dans
+votre **environnement Python local** (venv).
+
+Création de l’environnement :
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate          # Adapter sous Windows
+python -m pip install --upgrade pip
+pip install -r requirements.txt
 ```
 
-## Integrate with your tools
+Le fichier `requirements.txt` inclut notamment :
 
-- [ ] [Set up project integrations](https://gitlab.com/mlops_tps/optuna-cv-yolo/-/settings/integrations)
+* `mlflow`
+* `ultralytics`
+* `dvc[s3]`
+* `optuna`
 
-## Collaborate with your team
+---
 
-- [ ] [Invite team members and collaborators](https://docs.gitlab.com/ee/user/project/members/)
-- [ ] [Create a new merge request](https://docs.gitlab.com/ee/user/project/merge_requests/creating_merge_requests.html)
-- [ ] [Automatically close issues from merge requests](https://docs.gitlab.com/ee/user/project/issues/managing_issues.html#closing-issues-automatically)
-- [ ] [Enable merge request approvals](https://docs.gitlab.com/ee/user/project/merge_requests/approvals/)
-- [ ] [Set auto-merge](https://docs.gitlab.com/user/project/merge_requests/auto_merge/)
+## 3. Dataset tiny COCO (person) + DVC
 
-## Test and Deploy
+Le projet utilise un dataset **réduit** dérivé de COCO (personnes uniquement).
 
-Use the built-in continuous integration in GitLab.
+### Génération locale
 
-- [ ] [Get started with GitLab CI/CD](https://docs.gitlab.com/ee/ci/quick_start/)
-- [ ] [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/ee/user/application_security/sast/)
-- [ ] [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/ee/topics/autodevops/requirements.html)
-- [ ] [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/ee/user/clusters/agent/)
-- [ ] [Set up protected environments](https://docs.gitlab.com/ee/ci/environments/protected_environments.html)
+```bash
+python tools/make_tiny_person_from_coco128.py
+```
 
-***
+### Versioning avec DVC
 
-# Editing this README
+Selon les TP précédents, soit :
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
+```bash
+dvc status
+```
 
-## Suggestions for a good README
+ou, si nécessaire :
 
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
+```bash
+dvc init
+dvc add data/tiny_coco -R
+git add data/tiny_coco.dvc .gitignore .dvc/ .gitattributes
+git commit -m "Track dataset tiny_coco with DVC"
+```
 
-## Name
-Choose a self-explaining name for your project.
+Le dossier `data/tiny_coco` est ensuite utilisé pour :
 
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
+* l’entraînement YOLO (script `train_cv.py`)
+* les expériences Optuna (`optuna_yolo.py`)
 
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
+---
 
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
+## 4. Configuration MLflow
 
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+Avant de lancer les scripts, assurez-vous que `MLFLOW_TRACKING_URI`
+pointe vers l’instance locale (dans Docker) :
 
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
+### Linux / macOS / Git Bash
 
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
+```bash
+export MLFLOW_TRACKING_URI="http://localhost:5000"
+```
 
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
+### PowerShell
 
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
+```powershell
+$env:MLFLOW_TRACKING_URI = "http://localhost:5000"
+```
 
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
+### CMD
 
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
+```bat
+set MLFLOW_TRACKING_URI=http://localhost:5000
+```
 
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
+Les runs seront visibles dans l’UI MLflow et les artefacts seront stockés sur **AWS S3**.
 
-## License
-For open source projects, say how it is licensed.
+---
 
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+## 5. Entraînement baseline (`src/train_cv.py`)
+
+Script principal d’entraînement YOLO tiny (hérité du TP4).
+
+Exemple de commande :
+
+```bash
+python -m src.train_cv --epochs 3 --imgsz 320 --exp-name yolo_baseline_optuna
+```
+
+Ce script :
+
+* entraîne un modèle YOLOv8 tiny (`ultralytics.YOLO`)
+* loggue dans MLflow :
+
+  * les paramètres (epochs, imgsz, etc.)
+  * les métriques (par ex. `metrics/mAP50(B)`, `metrics/mAP50-95(B)`)
+  * le chemin du dossier YOLO (`runs/train/...`)
+* stocke les artefacts dans **S3** (via la config MLflow)
+
+---
+
+## 6. Grille d’expériences (scripts `run_grid.*`)
+
+Pour rappeler l’approche « grille » (TP4), le dépôt fournit des scripts :
+
+* `scripts/run_grid.sh` (Linux / macOS / Git Bash)
+* `scripts/run_grid.ps1` (PowerShell)
+* `scripts/run_grid.cmd` (CMD)
+
+Ils lancent plusieurs runs avec des variations d’hyperparamètres simples (par ex. `epochs`, `imgsz`).
+
+Exemples de lancement :
+
+```bash
+# Linux / macOS
+bash scripts/run_grid.sh
+
+# PowerShell
+.\scripts\run_grid.ps1
+
+# CMD
+scripts\run_grid.cmd
+```
+
+Dans l’UI MLflow, vous verrez plusieurs runs du type :
+
+* `yolo_e3_320`
+* `yolo_e5_416`
+* etc.
+
+---
+
+## 7. Optimisation des hyperparamètres avec Optuna
+
+Le cœur du TP6 est le script :
+
+* `src/optuna_yolo.py`
+
+Il définit une étude Optuna qui :
+
+* choisit des hyperparamètres (par ex. `epochs`, `imgsz`)
+* lance un entraînement YOLO tiny pour chaque **trial**
+* loggue chaque trial dans MLflow (un run MLflow par trial)
+* renvoie une métrique à **maximiser** (par ex. `metrics/mAP50(B)`)
+
+### Scripts de lancement
+
+Suivant votre OS, utilisez :
+
+```bash
+# Linux / macOS
+bash scripts/run_optuna.sh
+
+# PowerShell
+.\scripts\run_optuna.ps1
+
+# CMD
+scripts\run_optuna.cmd
+```
+
+Les paramètres par défaut (dans les scripts) :
+
+* `--n-trials 5` (5 essais)
+* `--exp-prefix optuna_yolo` (préfixe dans les noms de runs)
+
+En fin d’étude, le script affiche :
+
+* la meilleure valeur de la métrique (ex. meilleur mAP50)
+* les meilleurs hyperparamètres trouvés par Optuna
+
+---
+
+## 8. Analyse dans MLflow
+
+Dans l’UI MLflow ([http://localhost:5000](http://localhost:5000)), vous pouvez :
+
+1. **Filtrer** les runs :
+
+   * par expérience (`cv_yolo_tiny` / `cv_yolo_tiny_optuna` selon config)
+   * par tag (`optuna_study`, etc.)
+2. **Comparer** :
+
+   * les runs issus de la **grille** (`run_grid`)
+   * les runs issus d’**Optuna** (`run_optuna`)
+3. Observer :
+
+   * l’impact de `epochs` et `imgsz` sur `metrics/mAP50(B)`
+   * les compromis performance / temps d’entraînement
+
+---
+
+## 9. (Optionnel) ZenML / ZenML Server
+
+Le dépôt contient encore :
+
+* des fichiers de configuration ZenML (`src/zenml_steps/`, `src/zenml_pipelines/`, etc.)
+* un conteneur **ZenML Server** dans `docker-compose.yml`
+
+Ils proviennent du TP5 (pipelines ZenML + MLflow + S3).
+
+> Pour ce TP6 (**Optuna**), vous n’avez pas besoin de :
+>
+> * vous connecter à ZenML Server
+> * gérer les stacks ZenML
+> * lancer des pipelines ZenML
+
+Toute l’activité se fait via :
+
+* `train_cv.py`
+* `run_grid.*`
+* `optuna_yolo.py`
+* MLflow + S3
+
+---
+
+## 10. (Annexe) Configuration initiale côté ZenML Server
+
+> Cette section est **réservée à l’admin**.
+
+1. Créer 2 buckets AWS S3 :
+
+* `mlflow-artifacts`
+* `zenml-artifacts`
+
+2. Entrer dans le conteneur ZenML Server :
+
+```bash
+docker exec -it zenml-server bash
+```
+
+3. Configurer MLflow comme tracker :
+
+```bash
+zenml experiment-tracker register mlflow_tracker \
+    --flavor=mlflow \
+    --tracking_uri=http://mlflow:5000 \
+    --tracking_token="dummy-token"
+```
+
+4. Créer le secret AWS :
+
+```bash
+zenml secret create aws_s3_secret \
+    --aws_access_key_id="$AWS_ACCESS_KEY_ID" \
+    --aws_secret_access_key="$AWS_SECRET_ACCESS_KEY" \
+    --aws_session_token="$AWS_SESSION_TOKEN"
+```
+
+5. Artifact store S3 :
+
+```bash
+zenml artifact-store register s3_artifacts \
+    --flavor=s3 \
+    --path='s3://VOTRE_BUCKET/zenml-artifacts' \
+    --authentication_secret=aws_s3_secret
+```
+
+6. Orchestrateur local :
+
+```bash
+zenml orchestrator register local_orch --flavor=local
+```
+
+7. Stack complète :
+
+```bash
+zenml stack register mlflow_stack \
+    -o local_orch -a s3_artifacts -e mlflow_tracker
+```
+
+8. Définir la stack par défaut :
+
+```bash
+zenml stack set mlflow_stack
+```
