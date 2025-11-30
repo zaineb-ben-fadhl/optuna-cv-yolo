@@ -9,10 +9,13 @@ from mlflow import log_metric, log_param
 import optuna
 from ultralytics import YOLO
 
+
+# Nom d'expérience MLflow / Optuna
 EXPERIMENT_NAME = "cv_yolo_tiny_optuna"
 
 
 def parse_args() -> argparse.Namespace:
+    """Parse les arguments de la ligne de commande pour l'étude Optuna."""
     parser = argparse.ArgumentParser(
         description="Optimisation d'hyperparamètres pour YOLO tiny avec Optuna + MLflow."
     )
@@ -50,15 +53,22 @@ def main() -> None:
     mlflow.set_tracking_uri(os.environ.get("MLFLOW_TRACKING_URI", "http://localhost:5000"))
     mlflow.set_experiment(EXPERIMENT_NAME)
 
+    # Clés de métriques renvoyées par Ultralytics (avec parenthèses)
+    MAP50_KEY = "metrics/mAP50(B)"
+    MAP5095_KEY = "metrics/mAP50-95(B)"
+    PREC_KEY = "metrics/precision(B)"
+    RECALL_KEY = "metrics/recall(B)"
+
     def objective(trial: optuna.Trial) -> float:
         """Fonction objectif Optuna.
 
         À chaque appel :
         - propose une config (epochs, imgsz),
         - lance un entraînement YOLO,
-        - logge la config + les métriques dans MLflow,
+        - loggue la config + les métriques dans MLflow,
         - renvoie une métrique (à maximiser).
         """
+
         # Hyperparamètres explorés par Optuna
         epochs = trial.suggest_int("epochs", 2, 5)
         imgsz = trial.suggest_categorical("imgsz", [320, 416])
@@ -74,10 +84,10 @@ def main() -> None:
             log_param("model", args.model)
             log_param("optuna_trial_number", trial.number)
 
-            # Tag pour retrouver facilement les runs liés à Optuna
+            # Tag pour filtrer facilement les runs liés à cette étude Optuna
             mlflow.set_tag("optuna_study", EXPERIMENT_NAME)
 
-            # Entraînement YOLO (comme dans train_cv.py)
+            # 2) Entraînement YOLO (comme dans train_cv.py)
             model = YOLO(args.model)
             results = model.train(
                 data=args.data,
@@ -87,40 +97,46 @@ def main() -> None:
                 name=exp_name,
             )
 
-            # Récupération des métriques Ultralytics
+            # 3) Récupération des métriques Ultralytics
             try:
-                metrics = results.results_dict  # ultralytics >= 8.3
+                # Ultralytics >= 8.3 : objet avec .results_dict
+                metrics = results.results_dict
             except Exception:
                 metrics = {}
 
-            # On privilégie mAP50 comme métrique d'optimisation si disponible
+            # Métrique objective à maximiser (par défaut zéro si rien trouvé)
             objective_metric = 0.0
 
-            if "metrics/mAP50(B)" in metrics:
-                objective_metric = float(metrics["metrics/mAP50(B)"])
-                log_metric("metrics/mAP50(B)", objective_metric)
+            # mAP50 (métrique principale)
+            if MAP50_KEY in metrics:
+                objective_metric = float(metrics[MAP50_KEY])
+                # Nom "propre" pour MLflow (sans parenthèses)
+                log_metric("metrics/mAP50_B", objective_metric)
 
-            # Si mAP50-95 est dispo, on la logge aussi (info)
-            if "metrics/mAP50-95(B)" in metrics:
-                log_metric("metrics/mAP50-95(B)", float(metrics["metrics/mAP50-95(B)"]))
+            # mAP50-95 (info complémentaire)
+            if MAP5095_KEY in metrics:
+                log_metric("metrics/mAP50_95_B", float(metrics[MAP5095_KEY]))
 
-            # Metrics optionnelles : précision / rappel
-            for key in ["metrics/precision(B)", "metrics/recall(B)"]:
-                if key in metrics:
-                    log_metric(key, float(metrics[key]))
+            # Précision
+            if PREC_KEY in metrics:
+                log_metric("metrics/precision_B", float(metrics[PREC_KEY]))
 
-            # Si aucune métrique exploitable n'est disponible, on logge au moins un flag
+            # Rappel
+            if RECALL_KEY in metrics:
+                log_metric("metrics/recall_B", float(metrics[RECALL_KEY]))
+
+            # Si aucune métrique exploitable n'est disponible, log minimal
             if not metrics:
                 log_metric("training_finished", 1.0)
 
-            # Dossier de sortie YOLO
+            # 4) Dossier de sortie YOLO
             run_dir = Path("runs/train") / exp_name
             mlflow.log_param("yolo_run_dir", str(run_dir))
 
         # On cherche à MAXIMISER la métrique objective_metric
         return objective_metric
 
-    # 2) Création et exécution de l'étude Optuna
+    # 5) Création et exécution de l'étude Optuna
     study = optuna.create_study(
         direction="maximize",
         study_name=EXPERIMENT_NAME,
