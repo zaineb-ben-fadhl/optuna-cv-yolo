@@ -9,6 +9,14 @@ from mlflow import log_metric, log_param
 import optuna
 from ultralytics import YOLO
 
+# On essaie de désactiver l'intégration MLflow interne d'Ultralytics
+try:
+    from ultralytics.utils import SETTINGS
+    SETTINGS.update({"mlflow": False})
+except Exception:
+    # Si l'API change ou n'existe pas, on ignore simplement
+    pass
+
 
 # Nom d'expérience MLflow / Optuna
 EXPERIMENT_NAME = "cv_yolo_tiny_optuna"
@@ -68,6 +76,12 @@ def main() -> None:
         - loggue la config + les métriques dans MLflow,
         - renvoie une métrique (à maximiser).
         """
+
+        # SÉCURITÉ : si un run MLflow est encore actif (YOLO ou autre),
+        # on le ferme avant d'en démarrer un nouveau.
+        active_run = mlflow.active_run()
+        if active_run is not None:
+            mlflow.end_run()
 
         # Hyperparamètres explorés par Optuna
         epochs = trial.suggest_int("epochs", 2, 5)
