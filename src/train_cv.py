@@ -1,6 +1,7 @@
 import argparse
 import os
 from pathlib import Path
+import re
 
 import mlflow
 from mlflow import log_metric, log_param
@@ -27,11 +28,20 @@ def parse_args():
     return parser.parse_args()
 
 
+def sanitize_metric_name(name: str) -> str:
+    """
+    MLflow interdit certains caractères dans le nom des métriques (ex: parenthèses).
+    On remplace tout caractère non autorisé par "_".
+    Autorisé: alphanumériques, _, -, ., espace, :, /
+    """
+    return re.sub(r"[^0-9a-zA-Z_\-\. :/]", "_", name)
+
+
 def main():
     args = parse_args()
 
     mlflow.set_tracking_uri(os.environ.get("MLFLOW_TRACKING_URI", "http://localhost:5000"))
-    #mlflow.set_tracking_uri(os.environ["MLFLOW_TRACKING_URI"])
+    # mlflow.set_tracking_uri(os.environ["MLFLOW_TRACKING_URI"])
     mlflow.set_experiment("cv_yolo_tiny")
 
     with mlflow.start_run(run_name=args.exp_name):
@@ -59,7 +69,8 @@ def main():
         # Log de quelques métriques courantes si elles existent
         for key in ["metrics/mAP50(B)", "metrics/mAP50-95(B)", "metrics/precision(B)", "metrics/recall(B)"]:
             if key in metrics:
-                log_metric(key, float(metrics[key]))
+                safe_key = sanitize_metric_name(key)
+                log_metric(safe_key, float(metrics[key]))
 
         # On logge au moins une métrique fictive si rien n'est dispo
         if not metrics:
